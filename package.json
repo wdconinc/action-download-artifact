@@ -2,6 +2,9 @@
   "name": "action-download-artifact",
   "type": "module",
   "main": "main.js",
+  "scripts": {
+    "test": "node --test main.test.js"
+  },
   "dependencies": {
     "@actions/artifact": "^6.2.0",
     "@actions/core": "^3.0.0",

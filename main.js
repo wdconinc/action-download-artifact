@@ -6,6 +6,14 @@ import AdmZip from 'adm-zip'
 import { filesize } from 'filesize'
 import pathname from 'node:path'
 import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+export function isZipContentType(contentType) {
+    const mimeType = (contentType || '').split(';')[0].trim().toLowerCase()
+    return mimeType === 'application/zip' ||
+           mimeType === 'application/x-zip-compressed' ||
+           mimeType === 'application/zip-compressed'
+}
 
 async function downloadAction(name, path) {
     const artifactClient = artifact.create()
@@ -289,10 +297,7 @@ async function main() {
             }
 
             const contentType = response.headers.get('content-type') || ''
-            const mimeType = contentType.split(';')[0].trim().toLowerCase()
-            const isZipFile = mimeType === 'application/zip' ||
-                              mimeType === 'application/x-zip-compressed' ||
-                              mimeType === 'application/zip-compressed'
+            const isZipFile = isZipContentType(contentType)
 
             core.debug(`Content-Type: ${contentType}, Detected as zip: ${isZipFile}`)
 
@@ -356,4 +361,6 @@ async function main() {
     }
 }
 
-main()
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+    main()
+}
