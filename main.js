@@ -262,11 +262,11 @@ async function main() {
 
             const size = filesize(artifact.size_in_bytes, { base: 10 })
 
-            core.info(`==> Downloading: ${artifact.name}.zip (${size})`)
+            core.info(`==> Downloading: ${artifact.name} (${size})`)
 
-            let zip
+            let downloadResponse
             try {
-                zip = await client.rest.actions.downloadArtifact({
+                downloadResponse = await client.rest.actions.downloadArtifact({
                     owner: owner,
                     repo: repo,
                     artifact_id: artifact.id,
@@ -280,9 +280,28 @@ async function main() {
                 }
             }
 
+            core.debug(`Download URL: ${downloadResponse.url}`)
+
+            const response = await fetch(downloadResponse.url)
+
+            if (!response.ok) {
+                throw new Error(`Failed to download artifact: ${response.statusText}`)
+            }
+
+            const contentType = response.headers.get('content-type') || ''
+            const mimeType = contentType.split(';')[0].trim().toLowerCase()
+            const isZipFile = mimeType === 'application/zip' ||
+                              mimeType === 'application/x-zip-compressed' ||
+                              mimeType === 'application/zip-compressed'
+
+            core.debug(`Content-Type: ${contentType}, Detected as zip: ${isZipFile}`)
+
+            const buffer = Buffer.from(await response.arrayBuffer())
+
             if (skipUnpack) {
                 fs.mkdirSync(path, { recursive: true })
-                fs.writeFileSync(`${pathname.join(path, artifact.name)}.zip`, Buffer.from(zip.data), 'binary')
+                const ext = isZipFile ? '.zip' : ''
+                fs.writeFileSync(`${pathname.join(path, artifact.name)}${ext}`, buffer, 'binary')
                 continue
             }
 
@@ -290,23 +309,28 @@ async function main() {
 
             fs.mkdirSync(dir, { recursive: true })
 
-            core.startGroup(`==> Extracting: ${artifact.name}.zip`)
-            if (useUnzip) {
-                const zipPath = `${pathname.join(dir, artifact.name)}.zip`
-                fs.writeFileSync(zipPath, Buffer.from(zip.data), 'binary')
-                await exec.exec("unzip", [zipPath, "-d", dir])
-                fs.rmSync(zipPath)
+            if (!isZipFile) {
+                core.info(`==> Writing direct file: ${artifact.name}`)
+                fs.writeFileSync(pathname.join(dir, artifact.name), buffer, 'binary')
             } else {
-                const adm = new AdmZip(Buffer.from(zip.data))
-                adm.getEntries().forEach((entry) => {
-                    const action = entry.isDirectory ? "creating" : "inflating"
-                    const filepath = pathname.join(dir, entry.entryName)
+                core.startGroup(`==> Extracting: ${artifact.name}.zip`)
+                if (useUnzip) {
+                    const zipPath = `${pathname.join(dir, artifact.name)}.zip`
+                    fs.writeFileSync(zipPath, buffer, 'binary')
+                    await exec.exec("unzip", [zipPath, "-d", dir])
+                    fs.rmSync(zipPath)
+                } else {
+                    const adm = new AdmZip(buffer)
+                    adm.getEntries().forEach((entry) => {
+                        const action = entry.isDirectory ? "creating" : "inflating"
+                        const filepath = pathname.join(dir, entry.entryName)
 
-                    core.info(`  ${action}: ${filepath}`)
-                })
-                adm.extractAllTo(dir, true)
+                        core.info(`  ${action}: ${filepath}`)
+                    })
+                    adm.extractAllTo(dir, true)
+                }
+                core.endGroup()
             }
-            core.endGroup()
         }
     } catch (error) {
         core.setOutput("found_artifact", false)
