@@ -22,6 +22,17 @@ jobs:
         with:
           name: artifact
           path: artifact
+  upload-unarchived:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump
+        run: echo $GITHUB_SHA > sha
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: artifact-unarchived
+          path: sha
+          archive: false
   upload-multiple:
     runs-on: ubuntu-latest
     steps:

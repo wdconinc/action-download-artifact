@@ -121,6 +121,20 @@ jobs:
           ref: ${{github.event.pull_request.head.sha || github.sha}}
       - name: Test
         run: cat artifact/sha | grep $GITHUB_SHA
+  download-unarchived:
+    runs-on: ubuntu-latest
+    needs: wait
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Download
+        uses: ./
+        with:
+          workflow: upload.yml
+          name: artifact-unarchived
+          path: artifact-unarchived
+      - name: Test
+        run: cat artifact-unarchived/artifact-unarchived | grep $GITHUB_SHA
   download-multiple:
     runs-on: ubuntu-latest
     needs: wait
@@ -136,6 +150,7 @@ jobs:
           cat artifact/sha | grep $GITHUB_SHA
           cat artifact1/sha1 | grep $GITHUB_SHA
           cat artifact2/sha2 | grep $GITHUB_SHA
+          cat artifact-unarchived/artifact-unarchived | grep $GITHUB_SHA
   download-regexp:
     runs-on: ubuntu-latest
     needs: wait
