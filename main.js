@@ -6,6 +6,14 @@ import AdmZip from 'adm-zip'
 import { filesize } from 'filesize'
 import pathname from 'node:path'
 import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+export function isZipContentType(contentType) {
+    const mimeType = (contentType || '').split(';')[0].trim().toLowerCase()
+    return mimeType === 'application/zip' ||
+           mimeType === 'application/x-zip-compressed' ||
+           mimeType === 'application/zip-compressed'
+}
 
 async function downloadAction(name, path) {
     const artifactClient = artifact.create()
@@ -262,15 +270,16 @@ async function main() {
 
             const size = filesize(artifact.size_in_bytes, { base: 10 })
 
-            core.info(`==> Downloading: ${artifact.name}.zip (${size})`)
+            core.info(`==> Downloading: ${artifact.name} (${size})`)
 
-            let zip
+            let downloadResponse
             try {
-                zip = await client.rest.actions.downloadArtifact({
+                downloadResponse = await client.rest.actions.downloadArtifact({
                     owner: owner,
                     repo: repo,
                     artifact_id: artifact.id,
                     archive_format: "zip",
+                    request: { redirect: 'manual' },
                 })
             } catch (error) {
                 if (error.message.startsWith("Artifact has expired")) {
@@ -280,9 +289,28 @@ async function main() {
                 }
             }
 
+            const blobUrl = downloadResponse.headers.location
+            core.debug(`Download URL: ${blobUrl}`)
+
+            const response = await fetch(blobUrl)
+
+            if (!response.ok) {
+                throw new Error(`Failed to download artifact: ${response.statusText}`)
+            }
+
+            const contentType = response.headers.get('content-type') || ''
+            const urlPath = new URL(blobUrl).pathname.toLowerCase()
+            const urlIndicatesZip = urlPath.endsWith('.zip')
+            const isZipFile = isZipContentType(contentType) || urlIndicatesZip
+
+            core.debug(`Content-Type: ${contentType}, URL path: ${urlPath}, Detected as zip: ${isZipFile}`)
+
+            const buffer = Buffer.from(await response.arrayBuffer())
+
             if (skipUnpack) {
                 fs.mkdirSync(path, { recursive: true })
-                fs.writeFileSync(`${pathname.join(path, artifact.name)}.zip`, Buffer.from(zip.data), 'binary')
+                const ext = isZipFile ? '.zip' : ''
+                fs.writeFileSync(`${pathname.join(path, artifact.name)}${ext}`, buffer, 'binary')
                 continue
             }
 
@@ -290,23 +318,32 @@ async function main() {
 
             fs.mkdirSync(dir, { recursive: true })
 
-            core.startGroup(`==> Extracting: ${artifact.name}.zip`)
-            if (useUnzip) {
-                const zipPath = `${pathname.join(dir, artifact.name)}.zip`
-                fs.writeFileSync(zipPath, Buffer.from(zip.data), 'binary')
-                await exec.exec("unzip", [zipPath, "-d", dir])
-                fs.rmSync(zipPath)
+            if (!isZipFile) {
+                const contentDisposition = response.headers.get('content-disposition') || ''
+                const cdMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+                const rawFilename = cdMatch ? cdMatch[1].replace(/^['"]|['"]$/g, '').trim() : artifact.name
+                const filename = pathname.basename(rawFilename) || artifact.name
+                core.info(`==> Writing direct file: ${filename}`)
+                fs.writeFileSync(pathname.join(dir, filename), buffer, 'binary')
             } else {
-                const adm = new AdmZip(Buffer.from(zip.data))
-                adm.getEntries().forEach((entry) => {
-                    const action = entry.isDirectory ? "creating" : "inflating"
-                    const filepath = pathname.join(dir, entry.entryName)
+                core.startGroup(`==> Extracting: ${artifact.name}.zip`)
+                if (useUnzip) {
+                    const zipPath = `${pathname.join(dir, artifact.name)}.zip`
+                    fs.writeFileSync(zipPath, buffer, 'binary')
+                    await exec.exec("unzip", [zipPath, "-d", dir])
+                    fs.rmSync(zipPath)
+                } else {
+                    const adm = new AdmZip(buffer)
+                    adm.getEntries().forEach((entry) => {
+                        const action = entry.isDirectory ? "creating" : "inflating"
+                        const filepath = pathname.join(dir, entry.entryName)
 
-                    core.info(`  ${action}: ${filepath}`)
-                })
-                adm.extractAllTo(dir, true)
+                        core.info(`  ${action}: ${filepath}`)
+                    })
+                    adm.extractAllTo(dir, true)
+                }
+                core.endGroup()
             }
-            core.endGroup()
         }
     } catch (error) {
         core.setOutput("found_artifact", false)
@@ -332,4 +369,6 @@ async function main() {
     }
 }
 
-main()
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+    main()
+}
