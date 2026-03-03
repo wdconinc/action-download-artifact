@@ -279,6 +279,7 @@ async function main() {
                     repo: repo,
                     artifact_id: artifact.id,
                     archive_format: "zip",
+                    request: { redirect: 'manual' },
                 })
             } catch (error) {
                 if (error.message.startsWith("Artifact has expired")) {
@@ -288,18 +289,21 @@ async function main() {
                 }
             }
 
-            core.debug(`Download URL: ${downloadResponse.url}`)
+            const blobUrl = downloadResponse.headers.location
+            core.debug(`Download URL: ${blobUrl}`)
 
-            const response = await fetch(downloadResponse.url)
+            const response = await fetch(blobUrl)
 
             if (!response.ok) {
                 throw new Error(`Failed to download artifact: ${response.statusText}`)
             }
 
             const contentType = response.headers.get('content-type') || ''
-            const isZipFile = isZipContentType(contentType)
+            const urlPath = new URL(blobUrl).pathname.toLowerCase()
+            const urlIndicatesZip = urlPath.endsWith('.zip')
+            const isZipFile = isZipContentType(contentType) || urlIndicatesZip
 
-            core.debug(`Content-Type: ${contentType}, Detected as zip: ${isZipFile}`)
+            core.debug(`Content-Type: ${contentType}, URL path: ${urlPath}, Detected as zip: ${isZipFile}`)
 
             const buffer = Buffer.from(await response.arrayBuffer())
 
@@ -315,8 +319,12 @@ async function main() {
             fs.mkdirSync(dir, { recursive: true })
 
             if (!isZipFile) {
-                core.info(`==> Writing direct file: ${artifact.name}`)
-                fs.writeFileSync(pathname.join(dir, artifact.name), buffer, 'binary')
+                const contentDisposition = response.headers.get('content-disposition') || ''
+                const cdMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+                const rawFilename = cdMatch ? cdMatch[1].replace(/^['"]|['"]$/g, '').trim() : artifact.name
+                const filename = pathname.basename(rawFilename) || artifact.name
+                core.info(`==> Writing direct file: ${filename}`)
+                fs.writeFileSync(pathname.join(dir, filename), buffer, 'binary')
             } else {
                 core.startGroup(`==> Extracting: ${artifact.name}.zip`)
                 if (useUnzip) {

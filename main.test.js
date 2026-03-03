@@ -77,7 +77,7 @@ describe('artifact download behaviour', () => {
 
     test('non-ZIP artifact (archive: false) is written as a plain file', () => {
         // Simulate what main.js does when isZipFile is false:
-        //   fs.writeFileSync(pathname.join(dir, artifact.name), buffer, 'binary')
+        //   fs.writeFileSync(pathname.join(dir, filename), buffer, 'binary')
         const artifactName = 'my-binary'
         const content = 'raw file content'
         const buffer = Buffer.from(content)
@@ -137,6 +137,47 @@ describe('artifact download behaviour', () => {
 
         assert.ok(fs.existsSync(path.join(tmpDir, 'my-archive.zip')), 'file with .zip extension should exist')
         assert.ok(!fs.existsSync(path.join(tmpDir, 'my-archive')), 'file without extension should not exist')
+    })
+
+    // -------------------------------------------------------------------------
+    // URL-based ZIP detection
+    // -------------------------------------------------------------------------
+    test('URL path ending with .zip is detected as ZIP', () => {
+        const blobUrl = 'https://storage.example.com/artifact-sha.zip?sig=abc'
+        const urlPath = new URL(blobUrl).pathname.toLowerCase()
+        assert.ok(urlPath.endsWith('.zip'), 'URL pathname should end with .zip')
+    })
+
+    test('URL path not ending with .zip is not detected as ZIP via URL', () => {
+        const blobUrl = 'https://storage.example.com/artifact-sha?sig=abc'
+        const urlPath = new URL(blobUrl).pathname.toLowerCase()
+        assert.ok(!urlPath.endsWith('.zip'), 'URL pathname should not end with .zip')
+    })
+
+    // -------------------------------------------------------------------------
+    // Content-Disposition filename extraction
+    // -------------------------------------------------------------------------
+    test('Content-Disposition filename is used when present', () => {
+        // Simulate the filename extraction logic from main.js
+        function extractFilename(contentDisposition, fallback) {
+            const cdMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+            const rawFilename = cdMatch ? cdMatch[1].replace(/^['"]|['"]$/g, '').trim() : fallback
+            return path.basename(rawFilename) || fallback
+        }
+
+        assert.equal(extractFilename('attachment; filename="sha"', 'artifact-name'), 'sha')
+        assert.equal(extractFilename('attachment; filename=sha', 'artifact-name'), 'sha')
+        assert.equal(extractFilename('', 'artifact-name'), 'artifact-name')
+    })
+
+    test('path.basename sanitizes path traversal in artifact name', () => {
+        const dangerousName = '../../../etc/passwd'
+        const safe = path.basename(dangerousName)
+        assert.equal(safe, 'passwd')
+        // Ensure writing to a tmpDir using the sanitized name stays within tmpDir
+        const outputPath = path.join(tmpDir, safe)
+        fs.writeFileSync(outputPath, 'data', 'utf8')
+        assert.ok(fs.existsSync(outputPath))
     })
 })
 
