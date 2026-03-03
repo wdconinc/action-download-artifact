@@ -30,7 +30,6 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v7
         with:
-          name: artifact-unarchived
           path: sha
           archive: false
   upload-multiple:
